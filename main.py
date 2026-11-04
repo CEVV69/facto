@@ -26,6 +26,9 @@ SYSTEM = (
 )
 
 
+NOCACHE = {"Cache-Control": "no-cache, must-revalidate"}
+
+
 class Req(BaseModel):
     chunk: str
     context: str = ""
@@ -48,17 +51,17 @@ def _host(url: str) -> str:
 
 @app.get("/")
 def home():
-    return FileResponse("index.html")
+    return FileResponse("index.html", headers=NOCACHE)
 
 
 @app.get("/manifest.json")
 def manifest():
-    return FileResponse("manifest.json", media_type="application/manifest+json")
+    return FileResponse("manifest.json", media_type="application/manifest+json", headers=NOCACHE)
 
 
 @app.get("/sw.js")
 def sw():
-    return FileResponse("sw.js", media_type="application/javascript")
+    return FileResponse("sw.js", media_type="application/javascript", headers=NOCACHE)
 
 
 @app.get("/icons/{name}")

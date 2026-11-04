@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Facto</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0b6ef0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Facto">
 <style>
   body{font-family:-apple-system,system-ui,sans-serif;margin:0;padding:12px;background:#111;color:#eee}
   button{font-size:17px;padding:12px 16px;border:0;border-radius:10px;background:#2a7;color:#fff;margin:4px 4px 4px 0}
@@ -24,7 +31,7 @@
 <body>
 <details id="cfg">
   <summary>Código de acceso</summary>
-  <input id="key" type="password" placeholder="Código de acceso">
+  <input id="key" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Código de acceso">
   <button class="sec" onclick="saveKey()">Guardar código</button>
 </details>
 
@@ -40,13 +47,15 @@
 let rec = null, listening = false, buffer = [], busy = false, recent = [];
 
 function saveKey(){
-  localStorage.setItem("k", document.getElementById("key").value.trim());
+  const v = document.getElementById("key").value.trim();
+  localStorage.setItem("k", v);
   document.getElementById("key").value = "";
   document.getElementById("cfg").open = false;
-  setStatus("Código guardado en este dispositivo.");
+  setStatus("Código guardado (" + v.length + " caracteres).");
 }
 function setStatus(t){ document.getElementById("status").textContent = t; }
 
+if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
 let cur = null, nSess = 0;
 function newSession(){
   nSess++;

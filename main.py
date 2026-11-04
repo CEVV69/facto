@@ -9,7 +9,7 @@ from pydantic import BaseModel
 app = FastAPI()
 
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-ACCESS_CODE = os.environ.get("ACCESS_CODE", "")
+ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip().strip("\"'").strip()
 MODEL = "claude-haiku-5-5"
 
 SYSTEM = (
@@ -32,9 +32,33 @@ def home():
     return FileResponse("index.html")
 
 
+@app.get("/manifest.json")
+def manifest():
+    return FileResponse("manifest.json", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def sw():
+    return FileResponse("sw.js", media_type="application/javascript")
+
+
+@app.get("/icons/{name}")
+def icon(name: str):
+    if name not in ("icon-192.png", "icon-512.png", "apple-touch-icon.png"):
+        raise HTTPException(404)
+    return FileResponse(f"icons/{name}")
+
+
+@app.get("/api/health")
+def health():
+    # Diagnóstico: no revela el código, solo si está configurado y cuántos caracteres tiene.
+    return {"access_code_set": bool(ACCESS_CODE), "access_code_len": len(ACCESS_CODE), "api_key_set": bool(API_KEY)}
+
+
 @app.post("/api/verify")
 async def verify(r: Req, x_access_code: str = Header(default="")):
-    if not ACCESS_CODE or not secrets.compare_digest(x_access_code, ACCESS_CODE):
+    sent = x_access_code.strip().strip("\"'").strip().encode()
+    if not ACCESS_CODE or not secrets.compare_digest(sent, ACCESS_CODE.encode()):
         raise HTTPException(401, "Código de acceso incorrecto")
     if not API_KEY:
         raise HTTPException(500, "Falta ANTHROPIC_API_KEY en el servidor")

@@ -59,7 +59,8 @@ main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .tr.open{max-height:none;-webkit-mask-image:none;mask-image:none}
 .tr:empty{display:none}
 .cards{display:flex;flex-direction:column;gap:10px}
-.sess:not(.live) .cards:empty::after{content:"Sin datos verificables todavía";color:var(--mut);font-size:14px;padding:4px 0}
+.sess:not(.live) .cards:empty::after{content:"Sin datos verificables";color:var(--mut);font-size:14px;padding:4px 0}
+.sess.mute .cards:empty::after{content:"No se captó audio"}
 
 .card{position:relative;background:var(--surf);border:1px solid var(--line);border-radius:16px;padding:14px 44px 14px 14px}
 .card .x{position:absolute;top:4px;right:2px;width:44px;height:44px;display:grid;place-items:center;color:var(--mut)}
@@ -104,7 +105,7 @@ footer{display:flex;flex-direction:column;align-items:center;gap:8px;padding:10p
 <div id="app" hidden>
   <header>
     <img src="/icons/icon-192.png" alt="">
-    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v5</small></b>
+    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v6</small></b>
     <button class="ib" id="out" aria-label="Cerrar sesión">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>
     </button>
@@ -209,11 +210,26 @@ function makeRec(){
   const r = new SR();
   r.lang = "es-CL"; r.continuous = true; r.interimResults = true;
   r._sent = {}; r._open = {};
-  r.onaudiostart = ()=> dbg("audio");
-  r.onspeechstart = ()=> dbg("voz");
+  r.onaudiostart = ()=>{
+    dbg("audio");
+    // Si en 7 s no hay voz ni texto (iOS a veces deja el micrófono mudo), reintenta una sola vez con un reconocedor nuevo.
+    clearTimeout(r._wd);
+    r._wd = setTimeout(()=>{
+      if(r === rec && listening && !r._heard && !r._retried){
+        dbg("sin voz: reintento");
+        const n = makeRec(); n._retried = true; rec = n; recActive = false;
+        try{ r.abort(); }catch(_){}
+        setTimeout(()=>{ if(listening && rec === n){ try{ n.start(); }catch(_){} } }, 400);
+      }
+    }, 7000);
+  };
+  r.onsoundstart = ()=> dbg("sonido");
+  r.onspeechstart = ()=>{ r._heard = true; dbg("voz"); };
+  r.onnomatch = ()=> dbg("nomatch");
   r.onstart = ()=>{ dbg("onstart" + (r === rec ? "" : "(vieja)")); if(r === rec){ recActive = true; if(listening) setStatus("Escuchando…"); } };
   r.onresult = (e)=>{
     dbg("result" + (r === rec ? "" : "(vieja)"));
+    r._heard = true;
     if(r !== rec || !cur) return;
     let interim = "";
     for(let i = e.resultIndex; i < e.results.length; i++){
@@ -275,8 +291,8 @@ function start(){
 function stop(){
   dbg("stop()");
   listening = false;
-  if(rec){ flushR(rec); try{ rec.stop(); }catch(_){} }
-  if(cur) cur.el.classList.remove("live");
+  if(rec){ flushR(rec); clearTimeout(rec._wd); try{ rec.abort(); }catch(_){} }
+  if(cur){ cur.el.classList.remove("live"); cur.el.classList.toggle("mute", !(cur.fin.textContent + cur.int.textContent).trim()); }
   $("btn").innerHTML = I.mic; $("btn").className = ""; $("btn").setAttribute("aria-label","Escuchar");
   setStatus("");
 }

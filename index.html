@@ -104,7 +104,7 @@ footer{display:flex;flex-direction:column;align-items:center;gap:8px;padding:10p
 <div id="app" hidden>
   <header>
     <img src="/icons/icon-192.png" alt="">
-    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v4</small></b>
+    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v5</small></b>
     <button class="ib" id="out" aria-label="Cerrar sesión">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>
     </button>
@@ -195,10 +195,20 @@ function updateEmpty(){ $("empty").hidden = $("sessions").children.length > 0; }
 
 let recActive = false, dlog = [];
 function dbg(t){ dlog.push(t); $("dbg").textContent = dlog.slice(-9).join(" › "); }
+// Envía a verificar lo dicho sin esperar a que el navegador marque la frase como terminada.
+function flushR(r){
+  clearTimeout(r._tm);
+  for(const i in r._open){
+    const t = r._open[i], from = r._sent[i] || 0;
+    const piece = t.slice(from).trim();
+    if(piece.split(/\s+/).length >= 6){ onFinal(piece); r._sent[i] = t.length; }
+  }
+}
 function makeRec(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const r = new SR();
   r.lang = "es-CL"; r.continuous = true; r.interimResults = true;
+  r._sent = {}; r._open = {};
   r.onaudiostart = ()=> dbg("audio");
   r.onspeechstart = ()=> dbg("voz");
   r.onstart = ()=>{ dbg("onstart" + (r === rec ? "" : "(vieja)")); if(r === rec){ recActive = true; if(listening) setStatus("Escuchando…"); } };
@@ -208,10 +218,18 @@ function makeRec(){
     let interim = "";
     for(let i = e.resultIndex; i < e.results.length; i++){
       const t = e.results[i][0].transcript;
-      if(e.results[i].isFinal){ cur.fin.textContent += t + " "; onFinal(t.trim()); }
-      else interim += t;
+      if(e.results[i].isFinal){
+        cur.fin.textContent += t + " ";
+        onFinal(t.slice(r._sent[i] || 0).trim());
+        delete r._open[i]; delete r._sent[i];
+      } else {
+        interim += t; r._open[i] = t;
+        if(t.length - (r._sent[i] || 0) >= 140) flushR(r);
+      }
     }
     cur.int.textContent = interim;
+    clearTimeout(r._tm);
+    if(Object.keys(r._open).length) r._tm = setTimeout(()=> flushR(r), 1800);
   };
   r.onerror = (e)=>{
     dbg("err:" + e.error);
@@ -220,6 +238,7 @@ function makeRec(){
   };
   r.onend = ()=>{
     dbg("onend" + (r === rec ? "" : "(vieja)"));
+    if(r === rec) flushR(r);
     if(r === rec) recActive = false;
     // Reinicia si se corta solo, o arranca la escucha nueva que esperaba a que la anterior cerrara.
     if(listening){ try{ rec.start(); }catch(_){} }
@@ -256,7 +275,7 @@ function start(){
 function stop(){
   dbg("stop()");
   listening = false;
-  if(rec){ try{ rec.stop(); }catch(_){} }
+  if(rec){ flushR(rec); try{ rec.stop(); }catch(_){} }
   if(cur) cur.el.classList.remove("live");
   $("btn").innerHTML = I.mic; $("btn").className = ""; $("btn").setAttribute("aria-label","Escuchar");
   setStatus("");

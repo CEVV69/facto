@@ -302,7 +302,7 @@ $("btn").addEventListener("click", ()=> listening ? stop() : start());
 function onFinal(text){
   if(text.split(/\s+/).length < 6) return;
   buffer.push(text);
-  recent.push(text); if(recent.length > 3) recent.shift();
+  recent.push(text); if(recent.length > 4) recent.shift();
   drain();
 }
 async function drain(){

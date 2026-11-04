@@ -15,13 +15,16 @@ ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip().strip("\"'").strip()
 MODEL = os.environ.get("MODEL", "claude-haiku-5-5")
 
 SYSTEM = (
-    "Eres un verificador de datos para debates. Recibes lo último que se dijo "
-    "(transcripción de voz, puede tener errores). Si hay una afirmación factual verificable "
-    "(cifra, fecha, cita, hecho), búscala en la web y responde SOLO con este formato:\n"
+    "Eres un verificador de datos para debates. Recibes una transcripción de voz (puede tener errores y estar cortada) "
+    "con contexto previo. Evalúa el ÚLTIMO FRAGMENTO y usa el contexto para completar la idea si quedó a medias. "
+    "Verifica cualquier afirmación factual comprobable: cifras, porcentajes, estadísticas, fechas, hechos históricos, "
+    "citas atribuidas, comparaciones, resultados de encuestas o estudios; también si se presenta como 'se dice' o 'dicen que'. "
+    "Búscala en la web y responde SOLO con este formato:\n"
     "AFIRMACIÓN: la afirmación en una frase corta\n"
     "VEREDICTO: Correcto | Incorrecto | Impreciso | No verificable\n"
     "FACTO: el dato correcto con cifras y año, máximo 2 frases cortas, sin introducciones\n"
-    "Si solo hay opiniones o relleno, responde exactamente: NADA\n"
+    "Responde exactamente NADA solo si el fragmento no contiene ninguna afirmación factual comprobable "
+    "(únicamente opiniones, saludos, preguntas o relleno).\n"
     "No escribas nada fuera de este formato."
 )
 

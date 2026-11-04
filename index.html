@@ -21,9 +21,9 @@
 </head>
 <body>
 <details id="cfg">
-  <summary>Configuración (clave API)</summary>
-  <input id="key" type="password" placeholder="Clave API de Anthropic (sk-ant-...)">
-  <button class="sec" onclick="saveKey()">Guardar clave</button>
+  <summary>Código de acceso</summary>
+  <input id="key" type="password" placeholder="Código de acceso">
+  <button class="sec" onclick="saveKey()">Guardar código</button>
 </details>
 
 <div>
@@ -36,14 +36,13 @@
 <div id="cards"></div>
 
 <script>
-const MODEL = "claude-haiku-5-5";
 let rec = null, listening = false, buffer = [], busy = false, recent = [];
 
 function saveKey(){
   localStorage.setItem("k", document.getElementById("key").value.trim());
   document.getElementById("key").value = "";
   document.getElementById("cfg").open = false;
-  setStatus("Clave guardada en este dispositivo.");
+  setStatus("Código guardado en este dispositivo.");
 }
 function setStatus(t){ document.getElementById("status").textContent = t; }
 
@@ -94,36 +93,19 @@ function onFinal(text){
 async function drain(){
   if(busy || !buffer.length) return;
   const key = localStorage.getItem("k");
-  if(!key){ setStatus("Falta la clave API (Configuración)."); buffer=[]; return; }
+  if(!key){ setStatus("Falta el código de acceso."); buffer=[]; return; }
   busy = true;
   const chunk = buffer.join(" "); buffer = [];
   setStatus("Verificando...");
   try{
-    const r = await fetch("https://api.anthropic.com/v1/messages",{
+    const r = await fetch("/api/verify",{
       method:"POST",
-      headers:{
-        "content-type":"application/json",
-        "x-api-key":key,
-        "anthropic-version":"2023-06-01",
-        "anthropic-dangerous-direct-browser-access":"true"
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 600,
-        system: "Eres asistente de verificación de datos en un debate. Recibes lo último que se dijo (transcripción de voz, puede tener errores). Si hay una afirmación factual verificable (cifra, fecha, cita, hecho), búscala en la web y responde en español con este formato exacto:\nAFIRMACIÓN: ...\nVEREDICTO: Correcto / Incorrecto / Impreciso / No verificable\nDATO: dato correcto y fuente, en 2 líneas máximo.\nSi solo hay opiniones o relleno, responde exactamente: NADA",
-        tools:[{type:"web_search_20250305",name:"web_search",max_uses:2}],
-        messages:[{role:"user",content:"Contexto previo: "+recent.slice(0,-1).join(" ")+"\n\nÚltimo fragmento: "+chunk}]
-      })
+      headers:{"content-type":"application/json","x-access-code":key},
+      body: JSON.stringify({chunk: chunk, context: recent.slice(0,-1).join(" ")})
     });
     const j = await r.json();
-    if(j.error){ setStatus("Error API: "+j.error.message); busy=false; return; }
-    let text = "", links = [];
-    for(const b of j.content||[]){
-      if(b.type==="text") text += b.text;
-      if(b.type==="web_search_tool_result" && Array.isArray(b.content))
-        for(const x of b.content) if(x.url) links.push(x);
-    }
-    text = text.trim();
+    if(!r.ok){ setStatus("Error: "+(j.detail||r.status)); busy=false; return; }
+    const text = (j.text||"").trim(), links = j.links||[];
     if(text && !/^NADA\b/.test(text)) addCard(chunk, text, links.slice(0,3));
     setStatus(listening ? "Escuchando..." : "Detenido.");
   }catch(e){

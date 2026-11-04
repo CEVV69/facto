@@ -10,7 +10,9 @@
   button.stop{background:#c33}
   button.sec{background:#444}
   input{width:100%;box-sizing:border-box;padding:10px;margin:4px 0;border-radius:8px;border:1px solid #555;background:#222;color:#eee;font-size:15px}
-  #trans{background:#1b1b1b;border-radius:10px;padding:10px;min-height:70px;max-height:25vh;overflow:auto;font-size:15px}
+  .sess{border:1px solid #333;border-radius:12px;padding:10px;margin:12px 0}
+  .sess h3{margin:0 0 8px;font-size:14px;color:#9cf}
+  .trans{background:#1b1b1b;border-radius:10px;padding:10px;min-height:40px;max-height:20vh;overflow:auto;font-size:15px}
   #interim{color:#888}
   .card{background:#1e2a33;border-left:4px solid #4af;border-radius:8px;padding:10px;margin:10px 0;font-size:15px;white-space:pre-wrap}
   .card .q{color:#9cf;font-size:13px;margin-bottom:6px}
@@ -31,9 +33,8 @@
   <label><input type="checkbox" id="auto" checked style="width:auto"> Buscar datos automáticamente</label>
 </div>
 
-<div id="trans"><span id="final"></span><span id="interim"></span></div>
 <div id="status" style="font-size:13px;color:#888;margin:6px 0"></div>
-<div id="cards"></div>
+<div id="sessions"></div>
 
 <script>
 let rec = null, listening = false, buffer = [], busy = false, recent = [];
@@ -46,6 +47,23 @@ function saveKey(){
 }
 function setStatus(t){ document.getElementById("status").textContent = t; }
 
+let cur = null, nSess = 0;
+function newSession(){
+  nSess++;
+  const d = document.createElement("div"); d.className = "sess";
+  const h = document.createElement("h3");
+  h.textContent = "Escucha " + nSess + " · " + new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
+  const t = document.createElement("div"); t.className = "trans";
+  const fin = document.createElement("span"), int = document.createElement("span");
+  int.style.color = "#888";
+  t.append(fin, int);
+  const cards = document.createElement("div");
+  d.append(h, t, cards);
+  const s = document.getElementById("sessions");
+  s.insertBefore(d, s.firstChild);
+  cur = {fin, int, cards};
+  recent = []; buffer = [];
+}
 function toggle(){ listening ? stop() : start(); }
 
 function start(){
@@ -60,14 +78,15 @@ function start(){
     for(let i=e.resultIndex;i<e.results.length;i++){
       const t = e.results[i][0].transcript;
       if(e.results[i].isFinal){
-        document.getElementById("final").textContent += t + " ";
+        cur.fin.textContent += t + " ";
         onFinal(t.trim());
       } else interim += t;
     }
-    document.getElementById("interim").textContent = interim;
+    cur.int.textContent = interim;
   };
   rec.onerror = (e)=> setStatus("Error de micrófono: " + e.error);
   rec.onend = ()=>{ if(listening){ try{ rec.start(); }catch(_){} } };
+  newSession();
   listening = true;
   rec.start();
   const b = document.getElementById("btn");
@@ -95,6 +114,7 @@ async function drain(){
   const key = localStorage.getItem("k");
   if(!key){ setStatus("Falta el código de acceso."); buffer=[]; return; }
   busy = true;
+  const sess = cur;
   const chunk = buffer.join(" "); buffer = [];
   setStatus("Verificando...");
   try{
@@ -106,7 +126,7 @@ async function drain(){
     const j = await r.json();
     if(!r.ok){ setStatus("Error: "+(j.detail||r.status)); busy=false; return; }
     const text = (j.text||"").trim(), links = j.links||[];
-    if(text && !/^NADA\b/.test(text)) addCard(chunk, text, links.slice(0,3));
+    if(text && !/^NADA\b/.test(text)) addCard(sess, chunk, text, links.slice(0,3));
     setStatus(listening ? "Escuchando..." : "Detenido.");
   }catch(e){
     setStatus("Error: "+e.message);
@@ -115,7 +135,7 @@ async function drain(){
   drain();
 }
 
-function addCard(q, text, links){
+function addCard(sess, q, text, links){
   const d = document.createElement("div");
   d.className = "card";
   const qq = document.createElement("div");
@@ -128,8 +148,7 @@ function addCard(q, text, links){
     a.textContent = "🔗 " + (l.title || l.url);
     d.appendChild(a);
   }
-  const c = document.getElementById("cards");
-  c.insertBefore(d, c.firstChild);
+  sess.cards.insertBefore(d, sess.cards.firstChild);
 }
 </script>
 </body>

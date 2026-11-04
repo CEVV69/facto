@@ -1,5 +1,7 @@
 import os
+import re
 import secrets
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
@@ -10,21 +12,38 @@ app = FastAPI()
 
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip().strip("\"'").strip()
-MODEL = "claude-haiku-5-5"
+MODEL = os.environ.get("MODEL", "claude-haiku-5-5")
 
 SYSTEM = (
-    "Eres asistente de verificación de datos en un debate. Recibes lo último que se dijo "
+    "Eres un verificador de datos para debates. Recibes lo último que se dijo "
     "(transcripción de voz, puede tener errores). Si hay una afirmación factual verificable "
-    "(cifra, fecha, cita, hecho), búscala en la web y responde en español con este formato exacto:\n"
-    "AFIRMACIÓN: ...\nVEREDICTO: Correcto / Incorrecto / Impreciso / No verificable\n"
-    "DATO: dato correcto y fuente, en 2 líneas máximo.\n"
-    "Si solo hay opiniones o relleno, responde exactamente: NADA"
+    "(cifra, fecha, cita, hecho), búscala en la web y responde SOLO con este formato:\n"
+    "AFIRMACIÓN: la afirmación en una frase corta\n"
+    "VEREDICTO: Correcto | Incorrecto | Impreciso | No verificable\n"
+    "FACTO: el dato correcto con cifras y año, máximo 2 frases cortas, sin introducciones\n"
+    "Si solo hay opiniones o relleno, responde exactamente: NADA\n"
+    "No escribas nada fuera de este formato."
 )
 
 
 class Req(BaseModel):
     chunk: str
     context: str = ""
+
+
+def _ok(code: str) -> bool:
+    sent = code.strip().strip("\"'").strip().encode()
+    return bool(ACCESS_CODE) and secrets.compare_digest(sent, ACCESS_CODE.encode())
+
+
+def _field(label: str, text: str, stops: list[str]) -> str:
+    m = re.search(label + r":\s*(.+?)\s*(?=(?:" + "|".join(stops) + r"):|\Z)", text, re.S | re.I)
+    return m.group(1).strip() if m else ""
+
+
+def _host(url: str) -> str:
+    h = urlparse(url).hostname or url
+    return h[4:] if h.startswith("www.") else h
 
 
 @app.get("/")
@@ -52,13 +71,19 @@ def icon(name: str):
 @app.get("/api/health")
 def health():
     # Diagnóstico: no revela el código, solo si está configurado y cuántos caracteres tiene.
-    return {"access_code_set": bool(ACCESS_CODE), "access_code_len": len(ACCESS_CODE), "api_key_set": bool(API_KEY)}
+    return {"access_code_set": bool(ACCESS_CODE), "access_code_len": len(ACCESS_CODE), "api_key_set": bool(API_KEY), "model": MODEL}
+
+
+@app.post("/api/check")
+def check(x_access_code: str = Header(default="")):
+    if not _ok(x_access_code):
+        raise HTTPException(401, "Código de acceso incorrecto")
+    return {"ok": True}
 
 
 @app.post("/api/verify")
 async def verify(r: Req, x_access_code: str = Header(default="")):
-    sent = x_access_code.strip().strip("\"'").strip().encode()
-    if not ACCESS_CODE or not secrets.compare_digest(sent, ACCESS_CODE.encode()):
+    if not _ok(x_access_code):
         raise HTTPException(401, "Código de acceso incorrecto")
     if not API_KEY:
         raise HTTPException(500, "Falta ANTHROPIC_API_KEY en el servidor")
@@ -86,12 +111,29 @@ async def verify(r: Req, x_access_code: str = Header(default="")):
     j = resp.json()
     if "error" in j:
         raise HTTPException(502, j["error"].get("message", "Error de la API"))
-    text, links = "", []
+
+    text, cited, found = "", [], []
     for b in j.get("content", []):
         if b.get("type") == "text":
             text += b.get("text", "")
-        if b.get("type") == "web_search_tool_result" and isinstance(b.get("content"), list):
+            for ci in b.get("citations") or []:
+                if ci.get("url"):
+                    cited.append(ci["url"])
+        elif b.get("type") == "web_search_tool_result" and isinstance(b.get("content"), list):
             for x in b["content"]:
                 if x.get("url"):
-                    links.append({"url": x["url"], "title": x.get("title", "")})
-    return {"text": text.strip(), "links": links[:3]}
+                    found.append(x["url"])
+
+    afirm = _field("AFIRMACI[ÓO]N", text, ["VEREDICTO", "FACTO"])
+    veredicto = _field("VEREDICTO", text, ["AFIRMACI[ÓO]N", "FACTO"]) or "No verificable"
+    facto = _field("FACTO", text, ["AFIRMACI[ÓO]N", "VEREDICTO"])
+    if not afirm or not facto:
+        return {"card": None}
+
+    fuentes, seen = [], set()
+    for url in (cited or found[:2]):
+        name = _host(url)
+        if name not in seen:
+            seen.add(name)
+            fuentes.append({"name": name, "url": url})
+    return {"card": {"afirmacion": afirm, "veredicto": veredicto, "facto": facto, "fuentes": fuentes[:3]}}

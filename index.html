@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Apoyo Debate</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;margin:0;padding:12px;background:#111;color:#eee}
+  button{font-size:17px;padding:12px 16px;border:0;border-radius:10px;background:#2a7;color:#fff;margin:4px 4px 4px 0}
+  button.stop{background:#c33}
+  button.sec{background:#444}
+  input{width:100%;box-sizing:border-box;padding:10px;margin:4px 0;border-radius:8px;border:1px solid #555;background:#222;color:#eee;font-size:15px}
+  #trans{background:#1b1b1b;border-radius:10px;padding:10px;min-height:70px;max-height:25vh;overflow:auto;font-size:15px}
+  #interim{color:#888}
+  .card{background:#1e2a33;border-left:4px solid #4af;border-radius:8px;padding:10px;margin:10px 0;font-size:15px;white-space:pre-wrap}
+  .card .q{color:#9cf;font-size:13px;margin-bottom:6px}
+  .card a{color:#7cf;display:block;margin-top:4px;font-size:13px;word-break:break-all}
+  details{margin:6px 0}
+  label{font-size:14px}
+</style>
+</head>
+<body>
+<details id="cfg">
+  <summary>Configuración (clave API)</summary>
+  <input id="key" type="password" placeholder="Clave API de Anthropic (sk-ant-...)">
+  <button class="sec" onclick="saveKey()">Guardar clave</button>
+</details>
+
+<div>
+  <button id="btn" onclick="toggle()">🎤 Escuchar</button>
+  <label><input type="checkbox" id="auto" checked style="width:auto"> Buscar datos automáticamente</label>
+</div>
+
+<div id="trans"><span id="final"></span><span id="interim"></span></div>
+<div id="status" style="font-size:13px;color:#888;margin:6px 0"></div>
+<div id="cards"></div>
+
+<script>
+const MODEL = "claude-haiku-5-5";
+let rec = null, listening = false, buffer = [], busy = false, recent = [];
+
+function saveKey(){
+  localStorage.setItem("k", document.getElementById("key").value.trim());
+  document.getElementById("key").value = "";
+  document.getElementById("cfg").open = false;
+  setStatus("Clave guardada en este dispositivo.");
+}
+function setStatus(t){ document.getElementById("status").textContent = t; }
+
+function toggle(){ listening ? stop() : start(); }
+
+function start(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){ setStatus("Este navegador no soporta reconocimiento de voz. Usa Safari o Chrome."); return; }
+  rec = new SR();
+  rec.lang = "es-CL";
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.onresult = (e)=>{
+    let interim = "";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const t = e.results[i][0].transcript;
+      if(e.results[i].isFinal){
+        document.getElementById("final").textContent += t + " ";
+        onFinal(t.trim());
+      } else interim += t;
+    }
+    document.getElementById("interim").textContent = interim;
+  };
+  rec.onerror = (e)=> setStatus("Error de micrófono: " + e.error);
+  rec.onend = ()=>{ if(listening){ try{ rec.start(); }catch(_){} } };
+  listening = true;
+  rec.start();
+  const b = document.getElementById("btn");
+  b.textContent = "⏹ Detener"; b.className = "stop";
+  setStatus("Escuchando...");
+}
+function stop(){
+  listening = false;
+  if(rec) rec.stop();
+  const b = document.getElementById("btn");
+  b.textContent = "🎤 Escuchar"; b.className = "";
+  setStatus("Detenido.");
+}
+
+function onFinal(text){
+  if(!document.getElementById("auto").checked) return;
+  if(text.split(/\s+/).length < 6) return;
+  buffer.push(text);
+  recent.push(text); if(recent.length>3) recent.shift();
+  drain();
+}
+
+async function drain(){
+  if(busy || !buffer.length) return;
+  const key = localStorage.getItem("k");
+  if(!key){ setStatus("Falta la clave API (Configuración)."); buffer=[]; return; }
+  busy = true;
+  const chunk = buffer.join(" "); buffer = [];
+  setStatus("Verificando...");
+  try{
+    const r = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{
+        "content-type":"application/json",
+        "x-api-key":key,
+        "anthropic-version":"2023-06-01",
+        "anthropic-dangerous-direct-browser-access":"true"
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 600,
+        system: "Eres asistente de verificación de datos en un debate. Recibes lo último que se dijo (transcripción de voz, puede tener errores). Si hay una afirmación factual verificable (cifra, fecha, cita, hecho), búscala en la web y responde en español con este formato exacto:\nAFIRMACIÓN: ...\nVEREDICTO: Correcto / Incorrecto / Impreciso / No verificable\nDATO: dato correcto y fuente, en 2 líneas máximo.\nSi solo hay opiniones o relleno, responde exactamente: NADA",
+        tools:[{type:"web_search_20250305",name:"web_search",max_uses:2}],
+        messages:[{role:"user",content:"Contexto previo: "+recent.slice(0,-1).join(" ")+"\n\nÚltimo fragmento: "+chunk}]
+      })
+    });
+    const j = await r.json();
+    if(j.error){ setStatus("Error API: "+j.error.message); busy=false; return; }
+    let text = "", links = [];
+    for(const b of j.content||[]){
+      if(b.type==="text") text += b.text;
+      if(b.type==="web_search_tool_result" && Array.isArray(b.content))
+        for(const x of b.content) if(x.url) links.push(x);
+    }
+    text = text.trim();
+    if(text && !/^NADA\b/.test(text)) addCard(chunk, text, links.slice(0,3));
+    setStatus(listening ? "Escuchando..." : "Detenido.");
+  }catch(e){
+    setStatus("Error: "+e.message);
+  }
+  busy = false;
+  drain();
+}
+
+function addCard(q, text, links){
+  const d = document.createElement("div");
+  d.className = "card";
+  const qq = document.createElement("div");
+  qq.className = "q"; qq.textContent = "“" + q + "”";
+  d.appendChild(qq);
+  d.appendChild(document.createTextNode(text));
+  for(const l of links){
+    const a = document.createElement("a");
+    a.href = l.url; a.target = "_blank"; a.rel = "noopener";
+    a.textContent = "🔗 " + (l.title || l.url);
+    d.appendChild(a);
+  }
+  const c = document.getElementById("cards");
+  c.insertBefore(d, c.firstChild);
+}
+</script>
+</body>
+</html>

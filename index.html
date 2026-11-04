@@ -105,7 +105,7 @@ footer{display:flex;flex-direction:column;align-items:center;gap:8px;padding:10p
 <div id="app" hidden>
   <header>
     <img src="/icons/icon-192.png" alt="">
-    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v8<span id="modo"></span></small></b>
+    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v7</small></b>
     <button class="ib" id="out" aria-label="Cerrar sesión">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>
     </button>
@@ -195,9 +195,6 @@ function newSession(){
 function updateEmpty(){ $("empty").hidden = $("sessions").children.length > 0; }
 
 let recActive = false, dlog = [];
-// Modo experimental (?corto): una frase por reconocedor, con uno nuevo en cada ciclo (alternativa al bug de WebKit 321436).
-const SHORT = new URLSearchParams(location.search).has("corto");
-window.__facto = {};
 function dbg(t){ dlog.push(t); $("dbg").textContent = dlog.slice(-9).join(" › "); }
 // Envía a verificar lo dicho sin esperar a que el navegador marque la frase como terminada.
 function flushR(r){
@@ -211,8 +208,7 @@ function flushR(r){
 function makeRec(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const r = new SR();
-  r.lang = "es-CL"; r.continuous = !SHORT; r.interimResults = true;
-  window.__facto.rec = r; // ancla para que el navegador no lo descarte a mitad de escucha
+  r.lang = "es-CL"; r.continuous = true; r.interimResults = true;
   r._sent = {}; r._open = {};
   r.onaudiostart = ()=>{
     dbg("audio");
@@ -261,12 +257,7 @@ function makeRec(){
     if(r === rec) flushR(r);
     if(r === rec) recActive = false;
     // Reinicia si se corta solo, o arranca la escucha nueva que esperaba a que la anterior cerrara.
-    if(listening){
-      if(SHORT && r === rec){
-        rec = makeRec(); recActive = false;
-        setTimeout(()=>{ if(listening){ dbg("ciclo"); try{ rec.start(); }catch(_){ dbg("start-falló"); } } }, 250);
-      } else { try{ rec.start(); }catch(_){} }
-    }
+    if(listening){ try{ rec.start(); }catch(_){} }
   };
   return r;
 }
@@ -373,7 +364,6 @@ function addCard(sess, c){
 
 /* ---- Inicio ---- */
 if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
-if(SHORT) $("modo").textContent = " · corto";
 store.get() ? showApp() : showGate();
 </script>
 </body>

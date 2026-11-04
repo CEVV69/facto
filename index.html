@@ -104,7 +104,7 @@ footer{display:flex;flex-direction:column;align-items:center;gap:8px;padding:10p
 <div id="app" hidden>
   <header>
     <img src="/icons/icon-192.png" alt="">
-    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v3</small></b>
+    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v4</small></b>
     <button class="ib" id="out" aria-label="Cerrar sesión">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>
     </button>
@@ -120,6 +120,7 @@ footer{display:flex;flex-direction:column;align-items:center;gap:8px;padding:10p
   </main>
   <footer>
     <div id="status"></div>
+    <div id="dbg" style="font-size:11px;color:var(--mut);min-height:14px;text-align:center"></div>
     <button id="btn" aria-label="Escuchar"></button>
   </footer>
 </div>
@@ -192,13 +193,17 @@ function newSession(){
 }
 function updateEmpty(){ $("empty").hidden = $("sessions").children.length > 0; }
 
-let recActive = false;
+let recActive = false, dlog = [];
+function dbg(t){ dlog.push(t); $("dbg").textContent = dlog.slice(-9).join(" › "); }
 function makeRec(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const r = new SR();
   r.lang = "es-CL"; r.continuous = true; r.interimResults = true;
-  r.onstart = ()=>{ if(r === rec){ recActive = true; if(listening) setStatus("Escuchando…"); } };
+  r.onaudiostart = ()=> dbg("audio");
+  r.onspeechstart = ()=> dbg("voz");
+  r.onstart = ()=>{ dbg("onstart" + (r === rec ? "" : "(vieja)")); if(r === rec){ recActive = true; if(listening) setStatus("Escuchando…"); } };
   r.onresult = (e)=>{
+    dbg("result" + (r === rec ? "" : "(vieja)"));
     if(r !== rec || !cur) return;
     let interim = "";
     for(let i = e.resultIndex; i < e.results.length; i++){
@@ -209,10 +214,12 @@ function makeRec(){
     cur.int.textContent = interim;
   };
   r.onerror = (e)=>{
+    dbg("err:" + e.error);
     if(e.error === "not-allowed" || e.error === "service-not-allowed"){ stop(); setStatus("Permiso de micrófono denegado", "err"); }
     else if(e.error !== "no-speech" && e.error !== "aborted") setStatus("Error de micrófono: " + e.error, "err");
   };
   r.onend = ()=>{
+    dbg("onend" + (r === rec ? "" : "(vieja)"));
     if(r === rec) recActive = false;
     // Reinicia si se corta solo, o arranca la escucha nueva que esperaba a que la anterior cerrara.
     if(listening){ try{ rec.start(); }catch(_){} }
@@ -220,11 +227,13 @@ function makeRec(){
   return r;
 }
 function beginRec(){
+  dbg("start()");
   try{ rec.start(); }
-  catch(_){ setStatus("Preparando micrófono…"); }
+  catch(_){ dbg("start-falló"); setStatus("Preparando micrófono…"); }
   // Si en 2,5 s no arrancó (Safari a veces no cierra la escucha anterior), se recrea desde cero.
   setTimeout(()=>{
     if(listening && !recActive){
+      dbg("recrear");
       rec = makeRec();
       try{ rec.start(); }catch(_){ setStatus("No se pudo iniciar el micrófono. Cierra y abre la app.", "err"); }
     }
@@ -245,6 +254,7 @@ function start(){
   beginRec();
 }
 function stop(){
+  dbg("stop()");
   listening = false;
   if(rec){ try{ rec.stop(); }catch(_){} }
   if(cur) cur.el.classList.remove("live");

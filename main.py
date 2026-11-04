@@ -10,9 +10,10 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+API_KEY = os.environ.get("GEMINI_API_KEY", "")
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip().strip("\"'").strip()
-MODEL = os.environ.get("MODEL", "claude-haiku-5-5")
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
 SYSTEM = (
     "Eres un verificador de datos para debates. Recibes una transcripción de voz (puede tener errores y estar cortada) "
@@ -77,7 +78,7 @@ def icon(name: str):
 @app.get("/api/health")
 def health():
     # Diagnóstico: no revela el código, solo si está configurado y cuántos caracteres tiene.
-    return {"access_code_set": bool(ACCESS_CODE), "access_code_len": len(ACCESS_CODE), "api_key_set": bool(API_KEY), "model": MODEL}
+    return {"access_code_set": bool(ACCESS_CODE), "access_code_len": len(ACCESS_CODE), "api_key_set": bool(API_KEY), "model": MODEL, "provider": "gemini"}
 
 
 @app.post("/api/check")
@@ -92,57 +93,45 @@ async def verify(r: Req, x_access_code: str = Header(default="")):
     if not _ok(x_access_code):
         raise HTTPException(401, "Código de acceso incorrecto")
     if not API_KEY:
-        raise HTTPException(500, "Falta ANTHROPIC_API_KEY en el servidor")
-    messages = [
-        {"role": "user", "content": f"Contexto previo: {r.context}\n\nÚltimo fragmento: {r.chunk}"}
-    ]
-    text, cited, found, stop = "", [], [], ""
-    async with httpx.AsyncClient(timeout=90) as c:
-        for _ in range(3):  # la búsqueda web puede pausar el turno: se continúa hasta 3 veces
-            resp = await c.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": MODEL,
-                    "max_tokens": 1500,
-                    "system": SYSTEM,
-                    "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}],
-                    "messages": messages,
-                },
-            )
-            j = resp.json()
-            if "error" in j:
-                raise HTTPException(502, j["error"].get("message", "Error de la API"))
-            stop = j.get("stop_reason", "")
-            for b in j.get("content", []):
-                if b.get("type") == "text":
-                    text += b.get("text", "")
-                    for ci in b.get("citations") or []:
-                        if ci.get("url"):
-                            cited.append(ci["url"])
-                elif b.get("type") == "web_search_tool_result" and isinstance(b.get("content"), list):
-                    for x in b["content"]:
-                        if x.get("url"):
-                            found.append(x["url"])
-            if stop != "pause_turn":
-                break
-            messages.append({"role": "assistant", "content": j["content"]})
+        raise HTTPException(500, "Falta GEMINI_API_KEY en el servidor")
+    async with httpx.AsyncClient(timeout=60) as c:
+        resp = await c.post(
+            GEMINI_URL,
+            headers={"x-goog-api-key": API_KEY, "content-type": "application/json"},
+            json={
+                "system_instruction": {"parts": [{"text": SYSTEM}]},
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": f"Contexto previo: {r.context}\n\nÚltimo fragmento: {r.chunk}"}],
+                    }
+                ],
+                "tools": [{"google_search": {}}],
+                "generationConfig": {"maxOutputTokens": 700},
+            },
+        )
+    j = resp.json()
+    if "error" in j:
+        raise HTTPException(502, j["error"].get("message", "Error de la API"))
+    cand = (j.get("candidates") or [{}])[0]
+    finish = cand.get("finishReason", "")
+    text = "".join(p.get("text", "") for p in cand.get("content", {}).get("parts", []))
 
     clean = re.sub(r"[*_#`>]", "", text)
     afirm = _field("AFIRMACI[ÓO]N", clean, ["VEREDICTO", "FACTO"])
     veredicto = _field("VEREDICTO", clean, ["AFIRMACI[ÓO]N", "FACTO"]) or "No verificable"
     facto = _field("FACTO", clean, ["AFIRMACI[ÓO]N", "VEREDICTO"])
     if not afirm or not facto:
-        why = "nada" if re.search(r"\bNADA\b", clean) and not afirm else ("cortado" if stop == "max_tokens" else "formato")
-        return {"card": None, "why": why, "stop": stop, "raw": clean.strip()[:300]}
+        why = "nada" if re.search(r"\bNADA\b", clean) and not afirm else ("cortado" if finish == "MAX_TOKENS" else "formato")
+        return {"card": None, "why": why, "stop": finish, "raw": clean.strip()[:300]}
 
     fuentes, seen = [], set()
-    for url in (cited or found[:2]):
-        name = _host(url)
+    for chunk in (cand.get("groundingMetadata") or {}).get("groundingChunks") or []:
+        web = chunk.get("web") or {}
+        url = web.get("uri")
+        if not url:
+            continue
+        name = web.get("title") or _host(url)
         if name not in seen:
             seen.add(name)
             fuentes.append({"name": name, "url": url})

@@ -93,48 +93,52 @@ async def verify(r: Req, x_access_code: str = Header(default="")):
         raise HTTPException(401, "Código de acceso incorrecto")
     if not API_KEY:
         raise HTTPException(500, "Falta ANTHROPIC_API_KEY en el servidor")
-    async with httpx.AsyncClient(timeout=60) as c:
-        resp = await c.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": MODEL,
-                "max_tokens": 600,
-                "system": SYSTEM,
-                "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 2}],
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": f"Contexto previo: {r.context}\n\nÚltimo fragmento: {r.chunk}",
-                    }
-                ],
-            },
-        )
-    j = resp.json()
-    if "error" in j:
-        raise HTTPException(502, j["error"].get("message", "Error de la API"))
+    messages = [
+        {"role": "user", "content": f"Contexto previo: {r.context}\n\nÚltimo fragmento: {r.chunk}"}
+    ]
+    text, cited, found, stop = "", [], [], ""
+    async with httpx.AsyncClient(timeout=90) as c:
+        for _ in range(3):  # la búsqueda web puede pausar el turno: se continúa hasta 3 veces
+            resp = await c.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": MODEL,
+                    "max_tokens": 1500,
+                    "system": SYSTEM,
+                    "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+                    "messages": messages,
+                },
+            )
+            j = resp.json()
+            if "error" in j:
+                raise HTTPException(502, j["error"].get("message", "Error de la API"))
+            stop = j.get("stop_reason", "")
+            for b in j.get("content", []):
+                if b.get("type") == "text":
+                    text += b.get("text", "")
+                    for ci in b.get("citations") or []:
+                        if ci.get("url"):
+                            cited.append(ci["url"])
+                elif b.get("type") == "web_search_tool_result" and isinstance(b.get("content"), list):
+                    for x in b["content"]:
+                        if x.get("url"):
+                            found.append(x["url"])
+            if stop != "pause_turn":
+                break
+            messages.append({"role": "assistant", "content": j["content"]})
 
-    text, cited, found = "", [], []
-    for b in j.get("content", []):
-        if b.get("type") == "text":
-            text += b.get("text", "")
-            for ci in b.get("citations") or []:
-                if ci.get("url"):
-                    cited.append(ci["url"])
-        elif b.get("type") == "web_search_tool_result" and isinstance(b.get("content"), list):
-            for x in b["content"]:
-                if x.get("url"):
-                    found.append(x["url"])
-
-    afirm = _field("AFIRMACI[ÓO]N", text, ["VEREDICTO", "FACTO"])
-    veredicto = _field("VEREDICTO", text, ["AFIRMACI[ÓO]N", "FACTO"]) or "No verificable"
-    facto = _field("FACTO", text, ["AFIRMACI[ÓO]N", "VEREDICTO"])
+    clean = re.sub(r"[*_#`>]", "", text)
+    afirm = _field("AFIRMACI[ÓO]N", clean, ["VEREDICTO", "FACTO"])
+    veredicto = _field("VEREDICTO", clean, ["AFIRMACI[ÓO]N", "FACTO"]) or "No verificable"
+    facto = _field("FACTO", clean, ["AFIRMACI[ÓO]N", "VEREDICTO"])
     if not afirm or not facto:
-        return {"card": None}
+        why = "nada" if re.search(r"\bNADA\b", clean) and not afirm else ("cortado" if stop == "max_tokens" else "formato")
+        return {"card": None, "why": why, "stop": stop, "raw": clean.strip()[:300]}
 
     fuentes, seen = [], set()
     for url in (cited or found[:2]):

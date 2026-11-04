@@ -110,7 +110,7 @@ async def verify(r: Req, x_access_code: str = Header(default="")):
                     "model": MODEL,
                     "max_tokens": 1500,
                     "system": SYSTEM,
-                    "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+                    "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}],
                     "messages": messages,
                 },
             )

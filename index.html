@@ -299,10 +299,12 @@ function stop(){
 $("btn").addEventListener("click", ()=> listening ? stop() : start());
 
 /* ---- Verificación ---- */
+const HAS_DATA = /\d|%|por\s*ciento|millon|mill[oó]n|\bmil\b/i;
 function onFinal(text){
   if(text.split(/\s+/).length < 6) return;
-  buffer.push(text);
   recent.push(text); if(recent.length > 4) recent.shift();
+  if(!HAS_DATA.test(text)) return; // ahorra verificaciones: sin cifras/fechas/porcentajes no se envía
+  buffer.push(text);
   drain();
 }
 async function drain(){

@@ -59,7 +59,7 @@ main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .tr.open{max-height:none;-webkit-mask-image:none;mask-image:none}
 .tr:empty{display:none}
 .cards{display:flex;flex-direction:column;gap:10px}
-.cards:empty::after{content:"Sin datos verificables todavía";color:var(--mut);font-size:14px;padding:4px 0}
+.sess:not(.live) .cards:empty::after{content:"Sin datos verificables todavía";color:var(--mut);font-size:14px;padding:4px 0}
 
 .card{position:relative;background:var(--surf);border:1px solid var(--line);border-radius:16px;padding:14px 44px 14px 14px}
 .card .x{position:absolute;top:4px;right:2px;width:44px;height:44px;display:grid;place-items:center;color:var(--mut)}
@@ -192,12 +192,14 @@ function newSession(){
 }
 function updateEmpty(){ $("empty").hidden = $("sessions").children.length > 0; }
 
-function start(){
+let recActive = false;
+function makeRec(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){ setStatus("Este navegador no soporta reconocimiento de voz. Usa Safari o Chrome.", "err"); return; }
-  rec = new SR();
-  rec.lang = "es-CL"; rec.continuous = true; rec.interimResults = true;
-  rec.onresult = (e)=>{
+  const r = new SR();
+  r.lang = "es-CL"; r.continuous = true; r.interimResults = true;
+  r.onstart = ()=>{ if(r === rec){ recActive = true; if(listening) setStatus("Escuchando…"); } };
+  r.onresult = (e)=>{
+    if(r !== rec || !cur) return;
     let interim = "";
     for(let i = e.resultIndex; i < e.results.length; i++){
       const t = e.results[i][0].transcript;
@@ -206,20 +208,45 @@ function start(){
     }
     cur.int.textContent = interim;
   };
-  rec.onerror = (e)=>{
-    if(e.error === "not-allowed" || e.error === "service-not-allowed") setStatus("Permiso de micrófono denegado", "err");
+  r.onerror = (e)=>{
+    if(e.error === "not-allowed" || e.error === "service-not-allowed"){ stop(); setStatus("Permiso de micrófono denegado", "err"); }
     else if(e.error !== "no-speech" && e.error !== "aborted") setStatus("Error de micrófono: " + e.error, "err");
   };
-  rec.onend = ()=>{ if(listening){ try{ rec.start(); }catch(_){} } };
+  r.onend = ()=>{
+    if(r === rec) recActive = false;
+    // Reinicia si se corta solo, o arranca la escucha nueva que esperaba a que la anterior cerrara.
+    if(listening){ try{ rec.start(); }catch(_){} }
+  };
+  return r;
+}
+function beginRec(){
+  try{ rec.start(); }
+  catch(_){ setStatus("Preparando micrófono…"); }
+  // Si en 2,5 s no arrancó (Safari a veces no cierra la escucha anterior), se recrea desde cero.
+  setTimeout(()=>{
+    if(listening && !recActive){
+      rec = makeRec();
+      try{ rec.start(); }catch(_){ setStatus("No se pudo iniciar el micrófono. Cierra y abre la app.", "err"); }
+    }
+  }, 2500);
+}
+function start(){
+  if(!(window.SpeechRecognition || window.webkitSpeechRecognition)){
+    setStatus("Este navegador no soporta reconocimiento de voz. Usa Safari o Chrome.", "err"); return;
+  }
+  const old = rec;
+  rec = makeRec();
   newSession();
   listening = true;
-  rec.start();
   $("btn").innerHTML = I.stop; $("btn").className = "on"; $("btn").setAttribute("aria-label","Detener");
-  setStatus("Escuchando…");
+  setStatus("Iniciando…");
+  recActive = false;
+  if(old){ try{ old.abort(); }catch(_){} }
+  beginRec();
 }
 function stop(){
   listening = false;
-  if(rec) rec.stop();
+  if(rec){ try{ rec.stop(); }catch(_){} }
   if(cur) cur.el.classList.remove("live");
   $("btn").innerHTML = I.mic; $("btn").className = ""; $("btn").setAttribute("aria-label","Escuchar");
   setStatus("");

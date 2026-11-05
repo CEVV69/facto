@@ -12,7 +12,7 @@ app = FastAPI()
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip().strip("\"'").strip()
-MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
+MODEL = os.environ.get("MODEL", "gemini-3.8-flash")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
 SYSTEM = (

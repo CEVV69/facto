@@ -4,15 +4,17 @@ import secrets
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 app = FastAPI()
 
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "").strip().strip("\"'").strip()
 MODEL = os.environ.get("MODEL", "claude-haiku-5-5")
+TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "whisper-large-v3-turbo")
 
 SYSTEM = (
     "Eres un verificador de datos para debates. Recibes una transcripción de voz (puede tener errores y estar cortada) "
@@ -77,7 +79,36 @@ def icon(name: str):
 @app.get("/api/health")
 def health():
     # Diagnóstico: no revela el código, solo si está configurado y cuántos caracteres tiene.
-    return {"access_code_set": bool(ACCESS_CODE), "access_code_len": len(ACCESS_CODE), "api_key_set": bool(API_KEY), "model": MODEL, "provider": "anthropic"}
+    return {
+        "access_code_set": bool(ACCESS_CODE),
+        "access_code_len": len(ACCESS_CODE),
+        "api_key_set": bool(API_KEY),
+        "groq_key_set": bool(GROQ_KEY),
+        "model": MODEL,
+        "provider": "anthropic",
+    }
+
+
+@app.post("/api/transcribe")
+async def transcribe(x_access_code: str = Header(default=""), audio: UploadFile = File(...)):
+    if not _ok(x_access_code):
+        raise HTTPException(401, "Código de acceso incorrecto")
+    if not GROQ_KEY:
+        raise HTTPException(500, "Falta GROQ_API_KEY en el servidor")
+    data = await audio.read()
+    if not data:
+        return {"text": ""}
+    async with httpx.AsyncClient(timeout=30) as c:
+        resp = await c.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {GROQ_KEY}"},
+            files={"file": (audio.filename or "chunk.webm", data, audio.content_type or "audio/webm")},
+            data={"model": TRANSCRIBE_MODEL, "language": "es", "response_format": "json"},
+        )
+    j = resp.json()
+    if "error" in j:
+        raise HTTPException(502, j["error"].get("message", "Error de transcripción"))
+    return {"text": j.get("text", "")}
 
 
 @app.post("/api/check")

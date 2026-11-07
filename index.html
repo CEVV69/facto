@@ -105,7 +105,7 @@ footer{display:flex;flex-direction:column;align-items:center;gap:8px;padding:10p
 <div id="app" hidden>
   <header>
     <img src="/icons/icon-192.png" alt="">
-    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v12</small></b>
+    <b>Facto <small style="font-weight:400;font-size:11px;color:var(--mut)">v13</small></b>
     <button class="ib" id="out" aria-label="Cerrar sesión">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>
     </button>
@@ -282,11 +282,9 @@ function stop(){
 $("btn").addEventListener("click", ()=> listening ? stop() : start());
 
 /* ---- Verificación ---- */
-const HAS_DATA = /\d|%|por\s*ciento|millon|mill[oó]n|\bmil\b/i;
 function onFinal(text){
   if(text.split(/\s+/).length < 6) return;
   recent.push(text); if(recent.length > 4) recent.shift();
-  if(!HAS_DATA.test(text)) return; // ahorra verificaciones: sin cifras/fechas/porcentajes no se envía
   buffer.push(text);
   drain();
 }
